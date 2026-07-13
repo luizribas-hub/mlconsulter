@@ -603,7 +603,7 @@ async function checkStatus(){try{const r=await fetch('/api/status');const s=awai
 const c=document.getElementById('conn');
 if(s.connected){c.innerHTML='\u2705 Conectado ao Mercado Livre';}
 else if(!s.configured){c.innerHTML='\u26a0\ufe0f Falta configurar as credenciais do Mercado Livre no servidor (ML_CLIENT_ID, ML_CLIENT_SECRET, ML_REDIRECT_URI).';}
-else{c.innerHTML='<a href="/oauth/login" style="color:#3483fa;font-weight:600">\ud83d\udd17 Conectar com Mercado Livre</a> (necessário antes de analisar)';}
+else{c.innerHTML='<a href="/oauth/login" style="color:#3483fa;font-weight:600">&#x1F517; Conectar com Mercado Livre</a> (necessário antes de analisar)';}
 }catch(e){}}
 checkStatus();
 </script></body></html>"""
