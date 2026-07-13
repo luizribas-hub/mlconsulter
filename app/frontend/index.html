@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auditoria de Anúncios do Mercado Livre</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+         margin: 0; background: #f5f6f8; color: #1a1a1a; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.sub { color: #666; margin: 0 0 24px; font-size: 14px; }
+  .card { background: #fff; border: 1px solid #e6e6e6; border-radius: 12px;
+          padding: 20px; margin-bottom: 16px; }
+  .row { display: flex; gap: 8px; }
+  input { flex: 1; padding: 12px 14px; font-size: 15px; border: 1px solid #ccc;
+          border-radius: 8px; }
+  button { padding: 12px 20px; font-size: 15px; font-weight: 600; border: 0;
+           border-radius: 8px; background: #3483fa; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .score { font-size: 44px; font-weight: 700; }
+  .classif { font-size: 15px; color: #555; }
+  .muted { color: #888; font-size: 13px; }
+  .item { padding: 12px 0; border-bottom: 1px solid #eee; }
+  .item:last-child { border-bottom: 0; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px;
+         border-radius: 999px; margin-right: 8px; text-transform: uppercase; }
+  .alta { background: #ffe3e3; color: #c92a2a; }
+  .media { background: #fff3bf; color: #a37200; }
+  .baixa { background: #e6fcf5; color: #087f5b; }
+  .hidden { display: none; }
+  pre.summary { white-space: pre-wrap; font-family: inherit; font-size: 14px;
+                line-height: 1.5; margin: 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Consultor de Anúncios — Mercado Livre</h1>
+  <p class="sub">Cole o código MLB ou o link do anúncio e receba um plano de ação.</p>
+
+  <div class="card">
+    <div class="row">
+      <input id="mlb" placeholder="Ex.: MLB123456789 ou link do anúncio" />
+      <button id="go">Analisar</button>
+    </div>
+    <p id="status" class="muted" style="margin:12px 0 0"></p>
+  </div>
+
+  <div id="result" class="hidden">
+    <div class="card">
+      <div class="score" id="score">–</div>
+      <div class="classif" id="classif"></div>
+    </div>
+    <div class="card">
+      <strong>O que eu faria se fosse meu</strong>
+      <pre class="summary" id="summary" style="margin-top:10px"></pre>
+    </div>
+    <div class="card">
+      <strong>Plano de ação</strong>
+      <div id="actions" style="margin-top:8px"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const btn = $("go"), input = $("mlb"), statusEl = $("status");
+
+async function start() {
+  const value = input.value.trim();
+  if (!value) return;
+  btn.disabled = true;
+  $("result").classList.add("hidden");
+  statusEl.textContent = "Criando análise...";
+  try {
+    const r = await fetch("/api/analysis", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({input: value}),
+    });
+    if (!r.ok) { statusEl.textContent = "Código inválido."; btn.disabled = false; return; }
+    const { analysis_id } = await r.json();
+    poll(analysis_id);
+  } catch (e) {
+    statusEl.textContent = "Erro de conexão.";
+    btn.disabled = false;
+  }
+}
+
+async function poll(id) {
+  statusEl.textContent = "Analisando o anúncio...";
+  for (let i = 0; i < 40; i++) {
+    await new Promise(res => setTimeout(res, 1500));
+    const r = await fetch("/api/analysis/" + id);
+    const data = await r.json();
+    if (data.status === "done") { render(data); return; }
+    if (data.status === "failed") {
+      statusEl.textContent = "Falhou: " + (data.error || "erro desconhecido");
+      btn.disabled = false; return;
+    }
+  }
+  statusEl.textContent = "Tempo esgotado. Tente novamente.";
+  btn.disabled = false;
+}
+
+function render(data) {
+  statusEl.textContent = "";
+  btn.disabled = false;
+  $("result").classList.remove("hidden");
+  $("score").textContent = (data.general_score ?? "–") + (data.general_score != null ? "/100" : "");
+  $("classif").textContent = data.classification || "";
+  $("summary").textContent = data.consultant_summary || "";
+  const box = $("actions");
+  box.innerHTML = "";
+  if (!data.action_items || data.action_items.length === 0) {
+    box.innerHTML = '<p class="muted">Nenhuma ação prioritária identificada.</p>';
+    return;
+  }
+  for (const a of data.action_items) {
+    const div = document.createElement("div");
+    div.className = "item";
+    const impact = a.impact ? '<div class="muted">' + a.impact + '</div>' : '';
+    div.innerHTML = '<span class="tag ' + a.priority + '">' + a.priority + '</span>' +
+                    a.title + impact;
+    box.appendChild(div);
+  }
+}
+
+btn.addEventListener("click", start);
+input.addEventListener("keydown", e => { if (e.key === "Enter") start(); });
+</script>
+</body>
+</html>
