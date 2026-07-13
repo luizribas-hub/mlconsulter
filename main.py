@@ -419,10 +419,13 @@ def run_analysis(analysis_id: str, mlb_id: str) -> None:
             )
         headers = {"Accept": "application/json", "Authorization": f"Bearer {token}"}
         with httpx.Client(base_url=ML_API_BASE, timeout=15.0, headers=headers) as client:
-            item_raw = ml_get(client, f"/items/{mlb_id}")
-            if not item_raw:
-                raise RuntimeError(f"Anúncio {mlb_id} não encontrado ou não acessível.")
-            item = snapshot(item_raw)
+            resp = client.get(f"/items/{mlb_id}")
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    f"ML respondeu {resp.status_code} ao ler {mlb_id}: "
+                    f"{resp.text[:200]}"
+                )
+            item = snapshot(resp.json())
             shared: dict = {}
             results = {}
             results["benchmark"] = module_benchmark(client, item, shared)
