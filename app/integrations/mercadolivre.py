@@ -31,8 +31,7 @@ import httpx
 from app.core.cache import cache_get, cache_set
 from app.core.config import settings
 
-MLB_ID_RE = re.compile(r"(ML[A-Z]{1,2})-?(\d+)", re.IGNORECASE)
-
+MLB_ID_RE = re.compile(r"(MLB)-?(\d{6,})", re.IGNORECASE)
 
 class MercadoLivreError(Exception):
     """Erro ao consultar a API do Mercado Livre."""
