@@ -171,15 +171,24 @@ def snapshot(item: dict, from_search: bool = False) -> dict:
         "mlb_id": item.get("id", ""),
         "title": item.get("title", ""),
         "price": item.get("price"),
+        "original_price": item.get("original_price"),
         "category_id": item.get("category_id"),
         "listing_type": item.get("listing_type_id"),
         "sold_quantity": item.get("sold_quantity"),
+        "available_quantity": item.get("available_quantity"),
         "free_shipping": bool(shipping.get("free_shipping")),
         "logistic_type": shipping.get("logistic_type"),
         "seller_id": seller_id,
         "picture_urls": pics,
+        "pictures_count": len(pics),
+        "video_id": item.get("video_id"),
+        "warranty": item.get("warranty"),
+        "health": item.get("health"),
+        "catalog_listing": item.get("catalog_listing"),
         "attributes": attrs,
+        "attributes_count": len([v for v in attrs.values() if v]),
         "permalink": item.get("permalink"),
+        "description": "",  # preenchido depois por /items/{id}/description
     }
 
 
@@ -263,6 +272,155 @@ def module_benchmark(client: httpx.Client, item: dict, shared: dict) -> dict:
     return {"module": "benchmark", "score": None, "findings": findings, "data": data}
 
 
+def module_title(item: dict) -> dict:
+    """Módulo 6 — SEO do título."""
+    findings: list[dict] = []
+    title = item.get("title", "") or ""
+    n = len(title)
+    attrs = item.get("attributes", {})
+    has_brand = bool(attrs.get("BRAND"))
+    has_model = bool(attrs.get("MODEL") or attrs.get("LINE"))
+    first_word_upper = title[:1].isupper()
+
+    score = 0.0
+    # aproveitamento do tamanho (títulos do ML vão até ~60 caracteres)
+    if n >= 50:
+        score += 45
+    elif n >= 40:
+        score += 35
+    elif n >= 25:
+        score += 22
+    else:
+        score += 10
+        findings.append({"severity": "atencao",
+                         "message": f"Título curto ({n} caracteres) — use até ~60 com palavras-chave.",
+                         "impact": "Título completo melhora busca e cliques."})
+    # marca e modelo ajudam muito no SEO
+    if has_brand:
+        score += 20
+    else:
+        findings.append({"severity": "atencao",
+                         "message": "Título/ficha sem a marca preenchida.",
+                         "impact": "Marca é uma das palavras mais buscadas."})
+    if has_model:
+        score += 20
+    else:
+        findings.append({"severity": "atencao",
+                         "message": "Título/ficha sem o modelo/linha preenchido.",
+                         "impact": "Modelo específico atrai o comprador certo."})
+    if first_word_upper:
+        score += 15
+    return {"module": "title", "score": round(min(score, 100), 1),
+            "findings": findings,
+            "data": {"tamanho": n, "tem_marca": has_brand, "tem_modelo": has_model}}
+
+
+def module_photos(item: dict) -> dict:
+    """Módulo 5 (versão enxuta) — quantidade de fotos e vídeo."""
+    findings: list[dict] = []
+    count = item.get("pictures_count", 0)
+    has_video = bool(item.get("video_id"))
+
+    score = min(count / 8.0, 1.0) * 70  # 8+ fotos = teto da parte de fotos
+    if count < 4:
+        findings.append({"severity": "critico",
+                         "message": f"Apenas {count} foto(s). Adicione mais (ideal 6 a 10).",
+                         "impact": "Mais fotos aumentam muito a conversão."})
+    elif count < 6:
+        findings.append({"severity": "atencao",
+                         "message": f"{count} fotos. Suba para 6-10 para cobrir ângulos e detalhes.",
+                         "impact": "Cobrir mais ângulos reduz dúvidas do comprador."})
+    if has_video:
+        score += 30
+    else:
+        findings.append({"severity": "atencao",
+                         "message": "Anúncio sem vídeo.",
+                         "impact": "Vídeo aumenta confiança e tempo na página."})
+    return {"module": "photos", "score": round(min(score, 100), 1),
+            "findings": findings,
+            "data": {"quantidade": count, "tem_video": has_video}}
+
+
+def module_description(item: dict) -> dict:
+    """Módulo 10 — qualidade da descrição."""
+    findings: list[dict] = []
+    desc = (item.get("description") or "").strip()
+    n = len(desc)
+    lines = [l for l in desc.splitlines() if l.strip()]
+    structured = len(lines) >= 4  # tem quebras/estrutura
+
+    score = 0.0
+    if n >= 800:
+        score += 60
+    elif n >= 400:
+        score += 45
+    elif n >= 150:
+        score += 25
+    else:
+        score += 5
+        findings.append({"severity": "critico" if n < 50 else "atencao",
+                         "message": f"Descrição curta ({n} caracteres). Detalhe benefícios e uso.",
+                         "impact": "Descrição rica esclarece dúvidas e vende mais."})
+    if structured:
+        score += 40
+    else:
+        findings.append({"severity": "atencao",
+                         "message": "Descrição sem estrutura (poucas quebras de linha/tópicos).",
+                         "impact": "Texto escaneável facilita a leitura no celular."})
+    return {"module": "description", "score": round(min(score, 100), 1),
+            "findings": findings,
+            "data": {"tamanho": n, "estruturada": structured}}
+
+
+def module_ficha(item: dict) -> dict:
+    """Módulo 15 (parte) — completude da ficha técnica / qualidade do cadastro.
+    Usa o índice de saúde (health) que o próprio ML calcula, quando disponível."""
+    findings: list[dict] = []
+    health = item.get("health")
+    attrs_count = item.get("attributes_count", 0)
+
+    if isinstance(health, (int, float)):
+        score = round(health * 100, 1)
+        if health < 0.8:
+            findings.append({"severity": "atencao" if health >= 0.5 else "critico",
+                             "message": f"Qualidade do cadastro em {int(health*100)}% "
+                                        f"(o ML mede isso). Preencha os campos faltantes.",
+                             "impact": "Ficha completa melhora relevância e posicionamento."})
+    else:
+        # sem health: pontua pela quantidade de atributos preenchidos
+        score = min(attrs_count / 12.0, 1.0) * 100
+        if attrs_count < 6:
+            findings.append({"severity": "atencao",
+                             "message": f"Poucos atributos preenchidos ({attrs_count}). "
+                                        f"Complete a ficha técnica.",
+                             "impact": "Atributos completos melhoram busca e filtros."})
+    return {"module": "ficha", "score": round(score, 1), "findings": findings,
+            "data": {"health": health, "atributos_preenchidos": attrs_count}}
+
+
+def module_shipping(item: dict) -> dict:
+    """Módulo 8 — frete e logística."""
+    findings: list[dict] = []
+    free = item.get("free_shipping")
+    full = item.get("logistic_type") == "fulfillment"
+
+    score = 0.0
+    if free:
+        score += 55
+    else:
+        findings.append({"severity": "atencao",
+                         "message": "Sem frete grátis.",
+                         "impact": "Frete grátis é forte fator de conversão no ML."})
+    if full:
+        score += 45
+    else:
+        findings.append({"severity": "atencao",
+                         "message": "Não está no Full (Fulfillment).",
+                         "impact": "Full dá entrega rápida e mais destaque na busca."})
+    return {"module": "shipping", "score": round(score, 1), "findings": findings,
+            "data": {"frete_gratis": bool(free), "full": full}}
+
+
 def module_price(item: dict, shared: dict) -> dict:
     findings: list[dict] = []
     agg = shared.get("aggregates") or {}
@@ -330,7 +488,15 @@ def module_reputation(client: httpx.Client, item: dict) -> dict:
 # ----------------------------------------------------------------------
 # Nota geral + classificação
 # ----------------------------------------------------------------------
-WEIGHTS = {"price": 0.55, "reputation": 0.45}
+WEIGHTS = {
+    "title": 0.16,
+    "photos": 0.16,
+    "description": 0.12,
+    "ficha": 0.14,
+    "shipping": 0.10,
+    "price": 0.16,
+    "reputation": 0.16,
+}
 
 
 def general_score(results: dict[str, dict]) -> Optional[float]:
@@ -387,6 +553,9 @@ def build_summary(item: dict, score: Optional[float], results: dict[str, dict]) 
             import anthropic  # import tardio: só se houver chave
             payload = {"titulo": item.get("title"), "preco": item.get("price"),
                        "nota_geral": score,
+                       "notas_por_modulo": {r["module"]: r["score"]
+                                            for r in results.values()
+                                            if r.get("score") is not None},
                        "concorrentes": results.get("benchmark", {}).get("data", {}).get("aggregates"),
                        "achados": findings}
             prompt = ("Você é um consultor especialista em otimização de anúncios do "
@@ -401,9 +570,27 @@ def build_summary(item: dict, score: Optional[float], results: dict[str, dict]) 
         except Exception:
             pass
     nota = f"{score}/100" if score is not None else "ainda não pontuável"
-    return (f"Análise do anúncio '{item.get('title')}'. Nota geral: {nota}. "
-            f"Foram identificados {len(findings)} pontos de melhoria no plano de ação. "
-            f"(Configure ANTHROPIC_API_KEY para a narrativa completa do consultor.)")
+    criticos = [f["message"] for f in findings if f["severity"] == "critico"]
+    atencao = [f["message"] for f in findings if f["severity"] == "atencao"]
+    # ordena os módulos por nota (piores primeiro) para apontar onde focar
+    notas = [(r["module"], r["score"]) for r in results.values()
+             if r.get("score") is not None]
+    notas.sort(key=lambda x: x[1])
+    nomes = {"title": "título", "photos": "fotos", "description": "descrição",
+             "ficha": "ficha técnica", "shipping": "frete", "price": "preço",
+             "reputation": "reputação"}
+    piores = ", ".join(f"{nomes.get(m, m)} ({s:.0f})" for m, s in notas[:3])
+    partes = [f"Análise de '{item.get('title')}'. Nota geral: {nota}."]
+    if piores:
+        partes.append(f"Onde focar primeiro (notas mais baixas): {piores}.")
+    if criticos:
+        partes.append("Pontos críticos: " + "; ".join(criticos[:3]) + ".")
+    elif atencao:
+        partes.append("Principais melhorias: " + "; ".join(atencao[:3]) + ".")
+    partes.append("Siga o plano de ação abaixo na ordem de prioridade. "
+                  "(Para uma análise ainda mais detalhada e personalizada, "
+                  "configure a chave de IA no servidor.)")
+    return " ".join(partes)
 
 
 # ----------------------------------------------------------------------
@@ -426,9 +613,18 @@ def run_analysis(analysis_id: str, mlb_id: str) -> None:
                     f"{resp.text[:200]}"
                 )
             item = snapshot(resp.json())
+            # descrição (agora temos permissão de leitura)
+            desc = ml_get(client, f"/items/{mlb_id}/description")
+            if desc:
+                item["description"] = desc.get("plain_text") or desc.get("text") or ""
             shared: dict = {}
             results = {}
             results["benchmark"] = module_benchmark(client, item, shared)
+            results["title"] = module_title(item)
+            results["photos"] = module_photos(item)
+            results["description"] = module_description(item)
+            results["ficha"] = module_ficha(item)
+            results["shipping"] = module_shipping(item)
             results["price"] = module_price(item, shared)
             results["reputation"] = module_reputation(client, item)
 
@@ -575,9 +771,11 @@ button:disabled{opacity:.5}.score{font-size:44px;font-weight:700}.classif{font-s
 <p id="status" class="muted" style="margin:12px 0 0"></p></div>
 <div id="result" class="hidden">
 <div class="card"><div class="score" id="score">–</div><div class="classif" id="classif"></div></div>
+<div class="card"><strong>Notas por área</strong><div id="scores" style="margin-top:8px"></div></div>
 <div class="card"><strong>O que eu faria se fosse meu</strong>
 <pre class="summary" id="summary" style="margin-top:10px"></pre></div>
 <div class="card"><strong>Plano de ação</strong><div id="actions" style="margin-top:8px"></div></div>
+<div class="card" id="compcard" style="display:none"><strong>Concorrência (mercado)</strong><div id="comp" style="margin-top:8px"></div></div>
 </div></div>
 <script>
 const $=(i)=>document.getElementById(i);const btn=$("go"),input=$("mlb"),st=$("status");
@@ -596,11 +794,26 @@ st.textContent="Tempo esgotado. Tente de novo.";btn.disabled=false;}
 function render(d){st.textContent="";btn.disabled=false;$("result").classList.remove("hidden");
 $("score").textContent=(d.general_score??"–")+(d.general_score!=null?"/100":"");
 $("classif").textContent=d.classification||"";$("summary").textContent=d.consultant_summary||"";
+const nomes={title:"Título",photos:"Fotos",description:"Descrição",ficha:"Ficha técnica",shipping:"Frete",price:"Preço",reputation:"Reputação",benchmark:"Concorrência"};
+const sc=$("scores");sc.innerHTML="";
+(d.scores||[]).forEach(s=>{if(s.score==null)return;
+const cor=s.score>=75?"#087f5b":s.score>=50?"#a37200":"#c92a2a";
+const row=document.createElement("div");row.className="item";
+row.innerHTML='<div style="display:flex;justify-content:space-between"><span>'+(nomes[s.module]||s.module)+'</span><strong style="color:'+cor+'">'+s.score+'</strong></div>';
+sc.appendChild(row);});
 const b=$("actions");b.innerHTML="";
-if(!d.action_items||!d.action_items.length){b.innerHTML='<p class="muted">Nenhuma ação prioritária.</p>';return;}
-for(const a of d.action_items){const div=document.createElement("div");div.className="item";
+if(!d.action_items||!d.action_items.length){b.innerHTML='<p class="muted">Nenhuma ação prioritária.</p>';}
+else{for(const a of d.action_items){const div=document.createElement("div");div.className="item";
 const im=a.impact?'<div class="muted">'+a.impact+'</div>':'';
 div.innerHTML='<span class="tag '+a.priority+'">'+a.priority+'</span>'+a.title+im;b.appendChild(div);}}
+let bench=(d.scores||[]).find(s=>s.module==="benchmark");
+let comps=bench&&bench.details&&bench.details.competitors||[];
+let agg=bench&&bench.details&&bench.details.aggregates;
+if(comps.length){$("compcard").style.display="block";const cd=$("comp");cd.innerHTML="";
+if(agg&&agg.preco_mediano){cd.innerHTML='<p class="muted">Preço mediano do nicho: R$ '+agg.preco_mediano+' | Concorrentes: '+(agg.n_concorrentes||comps.length)+'</p>';}
+comps.slice(0,6).forEach(c=>{const div=document.createElement("div");div.className="item";
+div.innerHTML='<a href="'+(c.permalink||"#")+'" target="_blank" style="color:#3483fa">'+c.title+'</a><div class="muted">R$ '+(c.price??"?")+' &middot; '+(c.sold_quantity??0)+' vendidos</div>';cd.appendChild(div);});}
+}
 btn.addEventListener("click",start);input.addEventListener("keydown",e=>{if(e.key==="Enter")start();});
 async function checkStatus(){try{const r=await fetch('/api/status');const s=await r.json();
 const c=document.getElementById('conn');
